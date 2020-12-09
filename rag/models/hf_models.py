@@ -19,14 +19,17 @@ from transformers.modeling_bert import BertConfig, BertModel
 from transformers.optimization import AdamW
 from transformers.tokenization_bert import BertTokenizer
 from transformers.tokenization_roberta import RobertaTokenizer
+from transformers import RagTokenizer, RagTokenForGeneration
 
 from dpr.utils.data_utils import Tensorizer
 from .biencoder import BiEncoder
 from .reader import Reader
+from .generator import Generator 
 
 logger = logging.getLogger(__name__)
 
 
+### wrapped encoder/reader/generator
 def get_bert_biencoder_components(args, inference_only: bool = False, **kwargs):
     dropout = args.dropout if hasattr(args, 'dropout') else 0.0
     question_encoder = HFBertEncoder.init_encoder(args.pretrained_model_cfg,
@@ -46,7 +49,6 @@ def get_bert_biencoder_components(args, inference_only: bool = False, **kwargs):
 
     return tensorizer, biencoder, optimizer
 
-
 def get_bert_reader_components(args, inference_only: bool = False, **kwargs):
     dropout = args.dropout if hasattr(args, 'dropout') else 0.0
     encoder = HFBertEncoder.init_encoder(args.pretrained_model_cfg,
@@ -63,19 +65,39 @@ def get_bert_reader_components(args, inference_only: bool = False, **kwargs):
     tensorizer = get_bert_tensorizer(args)
     return tensorizer, reader, optimizer
 
+def get_rag_generator_components(args, inference_only: bool = False, **kwargs):
+    # dropout = args.dropout if hasattr(args, 'dropout') else 0.0
+    # encoder = HFRagGenerator.init_encoder(args.pretrained_model_cfg,
+    #                                      projection_dim=args.projection_dim, dropout=dropout)
+    # hidden_size = encoder.config.hidden_size
+    # reader = Reader(encoder, hidden_size)
+    generator = Generator(args)
 
+    optimizer = get_optimizer(generator,
+                              learning_rate=args.learning_rate,
+                              adam_eps=args.adam_eps, weight_decay=args.weight_decay,
+                              ) if not inference_only else None
+
+    tensorizer = get_rag_tensorizer(args)
+    return tensorizer, generator, optimizer
+
+### wrapped tensorizer
 def get_bert_tensorizer(args, tokenizer=None):
     if not tokenizer:
         tokenizer = get_bert_tokenizer(args.pretrained_model_cfg, do_lower_case=args.do_lower_case)
     return BertTensorizer(tokenizer, args.sequence_length)
-
 
 def get_roberta_tensorizer(args, tokenizer=None):
     if not tokenizer:
         tokenizer = get_roberta_tokenizer(args.pretrained_model_cfg, do_lower_case=args.do_lower_case)
     return RobertaTensorizer(tokenizer, args.sequence_length)
 
+def get_rag_tensorizer(args, tokenizer=None):
+    if not tokenizer:
+        tokenizer = get_rag_tokenizer(args.pretrained_model_cfg, do_lower_case=args.do_lower_case)
+    return RobertaTensorizer(tokenizer, args.sequence_length) # reuse the code
 
+### optimizer
 def get_optimizer(model: nn.Module, learning_rate: float = 1e-5, adam_eps: float = 1e-8,
                   weight_decay: float = 0.0, ) -> torch.optim.Optimizer:
     no_decay = ['bias', 'LayerNorm.weight']
@@ -88,18 +110,18 @@ def get_optimizer(model: nn.Module, learning_rate: float = 1e-5, adam_eps: float
     optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=adam_eps)
     return optimizer
 
-
+### real hf tokenizer
 def get_bert_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
     return BertTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
 
-
 def get_roberta_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
-    # still uses HF code for tokenizer since they are the same
     return RobertaTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+
+def get_rag_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
+    return RagTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
 
 
 class HFBertEncoder(BertModel):
-
     def __init__(self, config, project_dim: int = 0):
         BertModel.__init__(self, config)
         assert config.hidden_size > 0, 'Encoder hidden_size can\'t be zero'

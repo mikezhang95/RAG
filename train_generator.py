@@ -7,7 +7,7 @@
 
 
 """
- Pipeline to train the reader model on top of the retriever results
+ Pipeline to train the generator model on top of the retriever results
 """
 
 import argparse
@@ -28,13 +28,13 @@ from rag.data.rouge import Rouge
 from rag.data.bleu import Bleu
 
 # samples
-from rag.data.reader_data import ReaderSample, get_best_spans, SpanPrediction, convert_retriever_results
+from rag.data.reader_data import convert_retriever_results
+from rag.models.generator import create_generator_input, GeneratorBatch
 
 # models
-from rag.models import init_reader_components
-from rag.models.reader import create_reader_input, ReaderBatch, compute_loss
+from rag.models import init_generator_components
 from rag.options import add_encoder_params, setup_args_gpu, set_seed, add_training_params, \
-    add_reader_preprocessing_params, set_encoder_params_from_state, get_encoder_params_state, add_tokenizer_params, \
+    add_generator_preprocessing_params, set_encoder_params_from_state, get_encoder_params_state, add_tokenizer_params, \
     print_args
 
 # other utils
@@ -49,10 +49,10 @@ if (logger.hasHandlers()):
 console = logging.StreamHandler(stream=sys.stdout)
 logger.addHandler(console)
 
-ReaderQuestionPredictions = collections.namedtuple('ReaderQuestionPredictions', ['question', 'id', 'predictions', 'gold_answers', 'passages_has_answer'])
+GeneratorQuestionPredictions = collections.namedtuple('GeneratorQuestionPredictions', ['question', 'id', 'predictions', 'gold_answers', 'passages_has_answer'])
 
 
-class ReaderTrainer(object):
+class GeneratorTrainer(object):
     def __init__(self, args):
         self.args = args
 
@@ -67,13 +67,13 @@ class ReaderTrainer(object):
             saved_state = load_states_from_checkpoint(model_file)
             set_encoder_params_from_state(saved_state.encoder_params, args)
 
-        tensorizer, reader, optimizer = init_reader_components(args.encoder_model_type, args)
+        tensorizer, generator, optimizer = init_generator_components(args.encoder_model_type, args)
 
-        reader, optimizer = setup_for_distributed_mode(reader, optimizer, args.device, args.n_gpu,
+        generator, optimizer = setup_for_distributed_mode(generator, optimizer, args.device, args.n_gpu,
                                                        args.local_rank,
                                                        args.fp16,
                                                        args.fp16_opt_level)
-        self.reader = reader
+        self.generator = generator 
         self.optimizer = optimizer
         self.tensorizer = tensorizer
         self.start_epoch = 0
@@ -143,44 +143,44 @@ class ReaderTrainer(object):
         args = self.args
         # in distributed DDP mode, save checkpoint for only one process
         save_cp = args.local_rank in [-1, 0]
-        reader_validation_score = self.validate()
+        generator_validation_score = self.validate()
 
         if save_cp:
             cp_name = self._save_checkpoint(scheduler, epoch, iteration)
             logger.info('Saved checkpoint to %s', cp_name)
 
-            if reader_validation_score < (self.best_validation_result or 0):
-                self.best_validation_result = reader_validation_score
+            if generator_validation_score < (self.best_validation_result or 0):
+                self.best_validation_result = generator_validation_score
                 self.best_cp_name = cp_name
                 logger.info('New Best validation checkpoint %s', cp_name)
 
     def validate(self):
         logger.info('Validation ...')
         args = self.args
-        self.reader.eval()
+        self.generator.eval()
         data_iterator = self.get_data_iterator(args.dev_file, args.dev_batch_size, False, shuffle=False)
 
         log_result_step = args.log_batch_step
         all_results = []
 
-        eval_top_docs = args.eval_top_docs
         for i, samples_batch in enumerate(data_iterator.iterate_data()):
-            input = create_reader_input(self.tensorizer.get_pad_id(),
+
+            # Notice: create_generator_input
+            # TODO:
+            input = create_generator_input(self.tensorizer.get_pad_id(),
                                         samples_batch,
                                         args.passages_per_question_predict,
                                         args.sequence_length,
                                         args.max_n_answers,
                                         is_train=False, shuffle=False)
 
-            input = ReaderBatch(**move_to_device(input._asdict(), args.device))
-            attn_mask = self.tensorizer.get_attn_mask(input.input_ids)
+            input = GeneratorBatch(**move_to_device(input._asdict(), args.device))
 
+            # TODO: generate output seqs 
             with torch.no_grad():
-                start_logits, end_logits, relevance_logits = self.reader(input.input_ids, attn_mask)
-
-            batch_predictions = self._get_best_prediction(start_logits, end_logits, relevance_logits, samples_batch,
-                                                          passage_thresholds=eval_top_docs)
-
+                start_logits, end_logits, relevance_logits = self.generator(input.input_ids, attn_mask)
+            # TODO: convert results
+            batch_predictions = 
             all_results.extend(batch_predictions)
 
             if (i + 1) % log_result_step == 0:
@@ -192,45 +192,49 @@ class ReaderTrainer(object):
         em = 0
         rouge_scorer = Rouge()
         bleu_scorer = Bleu()
-        if not args.test_only:
+
+        if len(all_results[0].gold_answers) != 0: 
+
             ems = defaultdict(list)
             gts = defaultdict(list)
             preds = defaultdict(list)
-            top1 = defaultdict(list)
+            topk = defaultdict(list)
 
             for q_predictions in all_results:
                 gold_answers = q_predictions.gold_answers
-                span_predictions = q_predictions.predictions  # {top docs threshold -> SpanPrediction()}
+                gen_predictions = q_predictions.predictions  # {top docs threshold -> SpanPrediction()}
                 # Notice: bad for evaluation
                 if len(gold_answers) == 0: continue
-                for (n, span_prediction) in span_predictions.items():
-                    em_hit = max([exact_match_score(span_prediction.prediction_text, ga) for ga in gold_answers])
+
+                for (n, gen_prediction) in gen_predictions.items():
+                    em_hit = max([exact_match_score(gen_prediction.prediction_text, ga) for ga in gold_answers])
                     ems[n].append(em_hit)
                     # for bleu/rouge later
                     gts[n].append(gold_answers)
-                    preds[n].append(span_prediction.prediction_text)
-                    # for qa_classify top1
-                    has_answer = q_predictions.passages_has_answer[span_prediction.passage_index]
-                    top1[n].append(float(has_answer))
+                    preds[n].append(gen_prediction.prediction_text)
+                    # for qa_classify topk
+                    has_answer = True in q_predictions.passages_has_answer
+                    topk[n].append(float(has_answer))
 
             for n in sorted(ems.keys()):
                 em = np.mean(ems[n])
                 bleu = bleu_scorer.compute_score(gts[n], preds[n])
                 rouge = rouge_scorer.compute_score(gts[n], preds[n])
-                t1 = np.mean(top1[n])
-                logger.info("n=%d\tEM %.2f\tRouge-L %.2f\tBLEU-4 %.2f\tTop-1 %.2f\n" % (n, em * 100, rouge * 100, bleu * 100, t1 * 100))
+                tk = np1mean(topk[n])
+                logger.info("n=%d\tEM %.2f\tRouge-L %.2f\tBLEU-4 %.2f\tTop-k %.2f\n" % (n, em * 100, rouge * 100, bleu * 100, tk * 100))
 
         return em
 
     def _train_epoch(self, scheduler, epoch: int, eval_step: int,
                      train_data_iterator: ShardedDataIterator, global_step: int):
+
         args = self.args
         rolling_train_loss = 0.0
         epoch_loss = 0
         log_result_step = args.log_batch_step
         rolling_loss_step = args.train_rolling_loss_step
 
-        self.reader.train()
+        self.generator.train()
         epoch_batches = train_data_iterator.max_iterations
 
         for i, samples_batch in enumerate(train_data_iterator.iterate_data(epoch=epoch)):
@@ -244,13 +248,15 @@ class ReaderTrainer(object):
                 if args.n_gpu > 0:
                     torch.cuda.manual_seed_all(args.seed + global_step)
 
-            input = create_reader_input(self.tensorizer.get_pad_id(),
+            # TODO: 
+            input = create_generator_input(self.tensorizer.get_pad_id(),
                                         samples_batch,
                                         args.passages_per_question,
                                         args.sequence_length,
                                         args.max_n_answers,
                                         is_train=True, shuffle=True)
 
+            # TODO:
             loss = self._calc_loss(input)
 
             epoch_loss += loss.item()
@@ -265,14 +271,14 @@ class ReaderTrainer(object):
             else:
                 loss.backward()
                 if args.max_grad_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(self.reader.parameters(), args.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(self.generator.parameters(), args.max_grad_norm)
 
             global_step += 1
 
             if (i + 1) % args.gradient_accumulation_steps == 0:
                 self.optimizer.step()
                 scheduler.step()
-                self.reader.zero_grad()
+                self.generator.zero_grad()
 
             if global_step % log_result_step == 0:
                 lr = self.optimizer.param_groups[0]['lr']
@@ -289,7 +295,7 @@ class ReaderTrainer(object):
             if global_step % eval_step == 0:
                 logger.info('Validation: Epoch: %d Step: %d/%d', epoch, data_iteration, epoch_batches)
                 self.validate_and_save(epoch, train_data_iterator.get_iteration(), scheduler)
-                self.reader.train()
+                self.generator.train()
 
         epoch_loss = (epoch_loss / epoch_batches) if epoch_batches > 0 else 0
         logger.info('Av Loss per epoch=%f', epoch_loss)
@@ -297,7 +303,7 @@ class ReaderTrainer(object):
 
     def _save_checkpoint(self, scheduler, epoch: int, offset: int) -> str:
         args = self.args
-        model_to_save = get_model_obj(self.reader)
+        model_to_save = get_model_obj(self.generator)
         cp = os.path.join(args.output_dir,
                           args.checkpoint_file_name + '.' + str(epoch) + ('.' + str(offset) if offset > 0 else ''))
 
@@ -318,7 +324,7 @@ class ReaderTrainer(object):
         self.start_epoch = epoch
         self.start_batch = offset
 
-        model_to_load = get_model_obj(self.reader)
+        model_to_load = get_model_obj(self.generator)
         if saved_state.model_dict:
             logger.info('Loading model weights from saved state ...')
             model_to_load.load_state_dict(saved_state.model_dict)
@@ -328,87 +334,14 @@ class ReaderTrainer(object):
             self.optimizer.load_state_dict(saved_state.optimizer_dict)
         self.scheduler_state = saved_state.scheduler_dict
 
-    def _get_best_prediction(self, start_logits, end_logits, relevance_logits,
-                             samples_batch: List[ReaderSample], passage_thresholds: List[int] = None) \
-            -> List[ReaderQuestionPredictions]:
-
+    def _calc_loss(self, input: GeneratorBatch) -> torch.Tensor:
         args = self.args
-        max_answer_length = args.max_answer_length
-        questions_num, passages_per_question = relevance_logits.size()
-
-        _, idxs = torch.sort(relevance_logits, dim=1, descending=True, )
-
-        batch_results = []
-        for q in range(questions_num):
-            sample = samples_batch[q]
-
-            non_empty_passages_num = len(sample.passages)
-            nbest = []
-            for p in range(passages_per_question):
-                passage_idx = idxs[q, p].item()
-                if passage_idx >= non_empty_passages_num:  # empty passage selected, skip
-                    continue
-                reader_passage = sample.passages[passage_idx]
-                sequence_ids = reader_passage.sequence_ids
-                sequence_len = sequence_ids.size(0)
-                # assuming question & title information is at the beginning of the sequence
-                passage_offset = reader_passage.passage_offset
-
-                p_start_logits = start_logits[q, passage_idx].tolist()[passage_offset:sequence_len]
-                p_end_logits = end_logits[q, passage_idx].tolist()[passage_offset:sequence_len]
-
-                ctx_ids = sequence_ids.tolist()[passage_offset:]
-                best_spans = get_best_spans(self.tensorizer, p_start_logits, p_end_logits, ctx_ids, max_answer_length,
-                                            passage_idx, relevance_logits[q, passage_idx].item(), top_spans=10)
-                nbest.extend(best_spans)
-                if len(nbest) > 0 and not passage_thresholds:
-                    break
-
-            if args.rank_method == 'span' :
-                nbest.sort(key=lambda x: x.span_score, reverse=True)
-            elif args.rank_method == 'rel+span' :
-                nbest.sort(key=lambda x: x.span_score+x.relevance_socre, reverse=True)
-
-            if passage_thresholds:
-                passage_rank_matches = {}
-                for n in passage_thresholds:
-                    curr_nbest = [pred for pred in nbest if pred.passage_index < n]
-                    try:
-                        passage_rank_matches[n] = curr_nbest[0]
-                    except:
-                        print("No answer for {}".format(sample.question))
-                        passage_rank_matches[n] = SpanPrediction('', -1, -1, -1, '')
-                predictions = passage_rank_matches
-            else:
-                if len(nbest) == 0:
-                    predictions = {passages_per_question: SpanPrediction('', -1, -1, -1, '')}
-                else:
-                    predictions = {passages_per_question: nbest[0]}
-            
-            has_answer = [p.has_answer for p in sample.passages]
-            batch_results.append(ReaderQuestionPredictions(sample.question, sample.question_id, predictions, sample.answers, has_answer))
-        return batch_results
-
-    def _calc_loss(self, input: ReaderBatch) -> torch.Tensor:
-        args = self.args
-        input = ReaderBatch(**move_to_device(input._asdict(), args.device))
-        attn_mask = self.tensorizer.get_attn_mask(input.input_ids)
+        input = GeneratorBatch(**move_to_device(input._asdict(), args.device))
         questions_num, passages_per_question, _ = input.input_ids.size()
 
-        if self.reader.training:
-            # start_logits, end_logits, rank_logits = self.reader(input.input_ids, attn_mask)
-            loss = self.reader(input.input_ids, attn_mask, input.start_positions, input.end_positions,
-                               input.answers_mask)
+        # TODO:
+        loss = self.generator(input.input_ids, attn_mask, input.start_positions, input.end_positions, input.answers_mask)
 
-        else:
-            # TODO: remove?
-            with torch.no_grad():
-                start_logits, end_logits, rank_logits = self.reader(input.input_ids, attn_mask)
-
-            loss = compute_loss(input.start_positions, input.end_positions, input.answers_mask, start_logits,
-                                end_logits,
-                                rank_logits,
-                                questions_num, passages_per_question)
         if args.n_gpu > 1:
             loss = loss.mean()
         if args.gradient_accumulation_steps > 1:
@@ -417,7 +350,6 @@ class ReaderTrainer(object):
         return loss
 
     def _get_preprocessed_files(self, data_files: List, is_train: bool, ):
-
         serialized_files = [file for file in data_files if file.endswith('.pkl')]
         if serialized_files:
             return serialized_files
@@ -440,7 +372,7 @@ class ReaderTrainer(object):
         if self.args.gold_passages_src:
             gold_passages_src = self.args.gold_passages_src if is_train else self.args.gold_passages_src_dev
             assert os.path.exists(gold_passages_src), 'Please specify valid gold_passages_src/gold_passages_src_dev'
-        logger.info('Data are not preprocessed for reader training. Start pre-processing ...')
+        logger.info('Data are not preprocessed for generator training. Start pre-processing ...')
 
         # start pre-processing and save results
         def _run_preprocessing(tensorizer: Tensorizer):
@@ -466,27 +398,21 @@ class ReaderTrainer(object):
 
         return serialized_files
 
-    def _save_predictions(self, out_file: str, prediction_results: List[ReaderQuestionPredictions]):
+    def _save_predictions(self, out_file: str, prediction_results: List[GeneratorQuestionPredictions]):
         logger.info('Saving prediction results to  %s', out_file)
         with open(out_file, 'w', encoding="utf-8") as output:
-            save_results = []
             for r in prediction_results:
-                save_results.append({
+                best_answer = list(r.predictions.values())[0].prediction_text
+                s = {
                     'question': r.question,
                     'question_id': r.id,
+                    'question_type': 'DESCRIPTION',
                     'gold_answers': r.gold_answers,
-                    'predictions': [{
-                        'top_k': top_k,
-                        'prediction': {
-                            'text': span_pred.prediction_text,
-                            'score': span_pred.span_score,
-                            'relevance_score': span_pred.relevance_score,
-                            'passage_idx': span_pred.passage_index,
-                            'passage': self.tensorizer.to_string(span_pred.passage_token_ids).replace(" ", "")
-                        }
-                    } for top_k, span_pred in r.predictions.items()]
-                })
-            output.write(json.dumps(save_results, indent=4, ensure_ascii=False) + "\n")
+                    'answers': [best_answer]
+                    'entity_answers': [[]],
+                    'yesno_answers': []
+                }
+                out_file.write(json.dumps(s, ensure_ascii=False) + "\n")
 
 
 def main():
@@ -495,9 +421,9 @@ def main():
     add_encoder_params(parser)
     add_training_params(parser)
     add_tokenizer_params(parser)
-    add_reader_preprocessing_params(parser)
+    add_generator_preprocessing_params(parser)
 
-    # reader specific params
+    # generator specific params
     parser.add_argument('--passages_per_question', type=int, default=5,
                         help="Total amount of positive and negative passages per question")
     parser.add_argument('--passages_per_question_predict', type=int, default=5,
@@ -526,7 +452,7 @@ def main():
     set_seed(args)
     print_args(args)
 
-    trainer = ReaderTrainer(args)
+    trainer = GeneratorTrainer(args)
 
     if args.train_file is not None:
         trainer.run_train()
