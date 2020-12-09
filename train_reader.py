@@ -22,17 +22,24 @@ from typing import List
 import numpy as np
 import torch
 
-from dpr.data.qa_validation import exact_match_score
-from dpr.data.rouge import Rouge 
-from dpr.data.bleu import Bleu
-from dpr.data.reader_data import ReaderSample, get_best_spans, SpanPrediction, convert_retriever_results
-from dpr.models import init_reader_components
-from dpr.models.reader import create_reader_input, ReaderBatch, compute_loss
-from dpr.options import add_encoder_params, setup_args_gpu, set_seed, add_training_params, \
+# evaluation metrics
+from rag.data.qa_validation import exact_match_score
+from rag.data.rouge import Rouge 
+from rag.data.bleu import Bleu
+
+# samples
+from rag.data.reader_data import ReaderSample, get_best_spans, SpanPrediction, convert_retriever_results
+
+# models
+from rag.models import init_reader_components
+from rag.models.reader import create_reader_input, ReaderBatch, compute_loss
+from rag.options import add_encoder_params, setup_args_gpu, set_seed, add_training_params, \
     add_reader_preprocessing_params, set_encoder_params_from_state, get_encoder_params_state, add_tokenizer_params, \
     print_args
-from dpr.utils.data_utils import ShardedDataIterator, read_serialized_data_from_files, Tensorizer
-from dpr.utils.model_utils import get_schedule_linear, load_states_from_checkpoint, move_to_device, CheckpointState, \
+
+# other utils
+from rag.utils.data_utils import ShardedDataIterator, read_serialized_data_from_files, Tensorizer
+from rag.utils.model_utils import get_schedule_linear, load_states_from_checkpoint, move_to_device, CheckpointState, \
     get_model_file, setup_for_distributed_mode, get_model_obj
 
 logger = logging.getLogger()
@@ -491,21 +498,16 @@ def main():
     add_reader_preprocessing_params(parser)
 
     # reader specific params
-    parser.add_argument("--max_n_answers", default=10, type=int,
-                        help="Max amount of answer spans to marginalize per singe passage")
-    parser.add_argument('--passages_per_question', type=int, default=2,
+    parser.add_argument('--passages_per_question', type=int, default=5,
                         help="Total amount of positive and negative passages per question")
-    parser.add_argument('--passages_per_question_predict', type=int, default=50,
+    parser.add_argument('--passages_per_question_predict', type=int, default=5,
                         help="Total amount of positive and negative passages per question for evaluation")
     parser.add_argument("--max_answer_length", default=10, type=int,
                         help="The maximum length of an answer that can be generated. This is needed because the start "
                              "and end predictions are not conditioned on one another.")
-    parser.add_argument('--eval_top_docs', nargs='+', type=int,
-                        help="top retrival passages thresholds to analyze prediction results for")
-    parser.add_argument('--checkpoint_file_name', type=str, default='dpr_reader')
     parser.add_argument('--prediction_results_file', type=str, help='path to a file to write prediction results to')
 
-    # training parameters
+    # training paras
     parser.add_argument("--eval_step", default=2000, type=int,
                         help="batch steps to run validation and save checkpoint")
     parser.add_argument("--output_dir", default=None, type=str,
@@ -514,10 +516,6 @@ def main():
     parser.add_argument('--fully_resumable', action='store_true',
                         help="Enables resumable mode by specifying global step dependent random seed before shuffling "
                              "in-batch data")
-    parser.add_argument('--test_only', action='store_true',
-                        help="do evaluation")
-    parser.add_argument('--rank_method', default="rel->span", type=str,
-                        help="Calculate exact match")
 
     args = parser.parse_args()
 
