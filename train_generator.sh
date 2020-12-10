@@ -15,11 +15,11 @@ python train_generator.py \
     --pretrained_model_cfg facebook/rag-token-nq \
     --do_lower_case \
     --dev_file data/dr_data/reader/dev.json \
-    --train_file data/dr_data/reader/train.json \
-    --sequence_length 512 \
+    --train_file data/dr_data/reader/dev.json \
+    --sequence_length 64 \
     --num_train_epochs 10 \
-    --batch_size 16 \
-    --dev_batch_size 16 \
+    --batch_size 4 \
+    --dev_batch_size 4 \
     --output_dir data/dr_exp/generator \
     --gradient_accumulation_steps 1 \
-    > data/dr_exp/generator/train.log 
+    # > data/dr_exp/generator/train.log 

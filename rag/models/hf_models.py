@@ -238,11 +238,11 @@ class RagTensorizer(Tensorizer):
         self.max_length = max_length
         self.pad_to_max = pad_to_max
 
-    def text_to_tensor_g(self, text: str, add_special_otkens: bool = True):
+    def text_to_tensor_g(self, text: str, add_special_tokens: bool = True):
         text = text.strip()
         text = text.replace(" ", "")
 
-        token_ids = self.g_tokenizer.encode(text, add_special_tokens=add_special_tokens, max_length=self.max_length, pad_to_max_length=pad_to_max, truncation=True)
+        token_ids = self.g_tokenizer.encode(text, add_special_tokens=add_special_tokens, max_length=self.max_length, pad_to_max_length=self.pad_to_max, truncation=True)
         return token_ids
 
     def text_to_tensor(self, text: str, title: str = None, add_special_tokens: bool = True):

@@ -45,7 +45,6 @@ class ReaderPassage(object):
         # offset of the actual passage (i.e. not a question or may be title) in the sequence_ids
         self.passage_offset = None
         self.answers_spans = None
-        self.answers_decoder_ids = None
         # passage token ids
         self.sequence_ids = None
 
@@ -65,13 +64,14 @@ class ReaderSample(object):
         Container to collect all Q&A passages data per singe question
     """
 
-    def __init__(self, question: str, answers: List, positive_passages: List[ReaderPassage] = [],
+    def __init__(self, question: str, answers: List, answers_ids: List, positive_passages: List[ReaderPassage] = [],
                  negative_passages: List[ReaderPassage] = [],
                  passages: List[ReaderPassage] = [],
                  question_id: str = "dummy_id",  
                  ):
         self.question = question
         self.answers = answers
+        self.answers_ids = answers_ids
         self.positive_passages = positive_passages
         self.negative_passages = negative_passages
         self.passages = passages
@@ -141,6 +141,8 @@ def preprocess_retriever_data(samples: List[Dict], gold_info_file: Optional[str]
 
     for sample in samples:
         question = sample['question']
+        answers = sample['answers']
+        answers_ids = [tensorizer.text_to_tensor_g(a, add_special_tokens=True) for a in answers]
 
         if question in canonical_questions:
             question = canonical_questions[question]
@@ -168,11 +170,11 @@ def preprocess_retriever_data(samples: List[Dict], gold_info_file: Optional[str]
             positives_from_gold += 1
 
         if is_train_set:
-            yield ReaderSample(question, sample['answers'], positive_passages=positive_passages,
+            yield ReaderSample(question, sample['answers'], answers_ids, positive_passages=positive_passages,
                                negative_passages=negative_passages)
         else:
             q_id = sample.get("question_id", "dummy_id")
-            yield ReaderSample(question, sample['answers'], passages=negative_passages,
+            yield ReaderSample(question, sample['answers'], answers_ids, passages=negative_passages,
                     question_id=q_id)
 
     logger.info('no positive passages samples: %d', no_positive_passages)
@@ -276,7 +278,7 @@ def _select_reader_passages(sample: Dict,
 
     ctxs = [ReaderPassage(**ctx) for ctx in sample['ctxs']][0:max_retriever_passages]
     answers_token_ids = [tensorizer.text_to_tensor(a, add_special_tokens=False) for a in answers]
-    answers_token_ids_g = [tensorizer.text_to_tensor_g(a, add_special_tokens=False) for a in answers]
+    answers_token_ids_g = [tensorizer.text_to_tensor_g(a, add_special_tokens=True) for a in answers]
 
     if is_train_set:
         positive_samples = list(filter(lambda ctx: ctx.has_answer, ctxs))
@@ -297,17 +299,10 @@ def _select_reader_passages(sample: Dict,
             answer_spans = [_find_answer_positions(ctx.passage_token_ids, answers_token_ids[i]) for i in
                             range(len(answers))]
 
-            # flatten spans list
-            answer_spans_all = [item for sublist in answer_spans for item in sublist]
-
-            # answers_spans = list(filter(None, answer_spans))
-            answers_spans = []
-            for i, answers_span in enumerate(answers_spans_all):
-                if answers_span is None: continue
-                answers_spans.append(answers_span)
-                answers_decoder_ids.append(answers_token_ids_g[i])
+            # flatten spans list 
+            answer_spans = [item for sublist in answer_spans for item in sublist]
+            answers_spans = list(filter(None, answer_spans))
             ctx.answers_spans = answers_spans
-            ctx.answers_decoder_ids = answers_decoder_ids 
 
             if not answers_spans:
                 logger.warning('No answer found in passage id=%s text=%s, answers=%s, question=%s', ctx.id,

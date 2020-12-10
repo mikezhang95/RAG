@@ -91,7 +91,8 @@ class GeneratorTrainer(object):
         logger.info("Data files: %s", data_files)
         if not data_files:
             raise RuntimeError('No Data files found')
-        preprocessed_data_files = self._get_preprocessed_files(data_files, is_train)
+        # preprocessed_data_files = self._get_preprocessed_files(data_files, is_train)
+        preprocessed_data_files = self._get_preprocessed_files(data_files, is_train=False)
         data = read_serialized_data_from_files(preprocessed_data_files)
 
         iterator = ShardedDataIterator(data, shard_id=self.shard_id,
@@ -167,6 +168,7 @@ class GeneratorTrainer(object):
 
             # 1. create generato input
             input = create_generator_input(self.tensorizer.get_pad_id(),
+                                        self.tensorizer.get_pad_id_g(),
                                         samples_batch,
                                         args.passages_per_question_predict,
                                         args.sequence_length,
@@ -267,6 +269,7 @@ class GeneratorTrainer(object):
 
             # 1. create generato input
             input = create_generator_input(self.tensorizer.get_pad_id(),
+                                        self.tensorizer.get_pad_id_g(),
                                         samples_batch,
                                         args.passages_per_question_predict,
                                         args.sequence_length,
@@ -276,10 +279,14 @@ class GeneratorTrainer(object):
             context_attn_mask = self.tensorizer.get_attn_mask(input.context_input_ids)
 
             # 2. compute loss
-            lsos = self.generator(input.context_input_ids, 
+            loss = self.generator(input.context_input_ids, 
                                   context_attn_mask,
                                   input.doc_scores,
                                   input.decoder_input_ids)
+            if args.n_gpu > 1:
+                loss = loss.mean()
+            if args.gradient_accumulation_steps > 1:
+                loss = loss / args.gradient_accumulation_steps
 
             epoch_loss += loss.item()
             rolling_train_loss += loss.item()
@@ -356,20 +363,6 @@ class GeneratorTrainer(object):
             self.optimizer.load_state_dict(saved_state.optimizer_dict)
         self.scheduler_state = saved_state.scheduler_dict
 
-    def _calc_loss(self, input: GeneratorBatch) -> torch.Tensor:
-        args = self.args
-        input = GeneratorBatch(**move_to_device(input._asdict(), args.device))
-        questions_num, passages_per_question, _ = input.input_ids.size()
-
-        # TODO:
-        loss = self.generator(input.input_ids, attn_mask, input.start_positions, input.end_positions, input.answers_mask)
-
-        if args.n_gpu > 1:
-            loss = loss.mean()
-        if args.gradient_accumulation_steps > 1:
-            loss = loss / args.gradient_accumulation_steps
-
-        return loss
 
     def _get_preprocessed_files(self, data_files: List, is_train: bool, ):
         serialized_files = [file for file in data_files if file.endswith('.pkl')]
