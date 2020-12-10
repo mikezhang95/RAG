@@ -19,7 +19,7 @@ import torch.nn as nn
 from torch import Tensor as T
 
 # reuse reader data patterns
-from dpr.data.reader_data import ReaderSample, ReaderPassage
+from rag.data.reader_data import ReaderSample, ReaderPassage
 
 logger = logging.getLogger()
 
@@ -28,12 +28,12 @@ GeneratorBatch = collections.namedtuple('GeneratorBatch', ['context_input_ids', 
 
 class Generator(nn.Module):
 
-    def __init__(self, generator: nn.Module, tokenizer):
+    def __init__(self, generator: nn.Module, tensorizer):
         super(Generator, self).__init__()
         self.generator = generator
-        self.pad_token_id = tokenizer.pad_token_id
-        self.bos_token_id = tokenizer.bos_token_id
-        self.eos_token_id = tokenizer.eos_token_id
+        self.pad_token_id = tensorizer.get_pad_id_g()
+        self.bos_token_id = tensorizer.get_bos_id_g()
+        self.eos_token_id = tensorizer.get_eos_id_g()
 
     def forward(self, context_input_ids, context_attention_mask, doc_scores, decoder_input_ids=None):
 
@@ -142,6 +142,7 @@ def _create_question_passages_tensors(ctxs: List[ReaderPassage],
                                       total_size: int,
                                       empty_ids: T,
                                       pad_token_id: int,
+                                      pad_token_id_g: int,
                                       is_train: bool,
                                       is_random: bool = True):
     max_len = empty_ids.size(0)
@@ -177,7 +178,7 @@ def _create_question_passages_tensors(ctxs: List[ReaderPassage],
     doc_scores = doc_scores.float()
 
     if is_train:
-        answer_input_ids = [_pad_to_len(ids), pad_token_id, max_len) for ids in answer_input_ids]
+        answer_input_ids = [_pad_to_len(ids, pad_token_id_g, max_len) for ids in answer_input_ids]
         answer_input_ids = answer_input_ids.squeeze(0) # [max_len]
         answer_input_ids = answer_input_ids.long() 
 

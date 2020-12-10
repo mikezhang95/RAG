@@ -81,11 +81,11 @@ TENSORIZER_INITIALIZERS = {
     'hf_roberta': init_hf_roberta_tenzorizer,
     'pytext_bert': init_hf_bert_tenzorizer,  # using HF's code as of now
     'fairseq_roberta': init_hf_roberta_tenzorizer,  # using HF's code as of now
-    'rag': init_rag_tenzorizer,
+    'hf_rag': init_rag_tenzorizer,
 }
 
 GENERATOR_INITIALIZERS = {
-    'rag': init_rag_generator,
+    'hf_rag': init_rag_generator,
 }
 
 def init_comp(initializers_dict, type, args, **kwargs):

@@ -15,13 +15,13 @@ from typing import Tuple
 import torch
 from torch import Tensor as T
 from torch import nn
-from transformers.modeling_bert import BertConfig, BertModel
+from transformers import BertConfig, BertModel
 from transformers.optimization import AdamW
-from transformers.tokenization_bert import BertTokenizer
-from transformers.tokenization_roberta import RobertaTokenizer
+from transformers import BertTokenizer
+from transformers import RobertaTokenizer
 from transformers import RagConfig, RagTokenizer, RagTokenForGeneration
 
-from dpr.utils.data_utils import Tensorizer
+from rag.utils.data_utils import Tensorizer
 from .biencoder import BiEncoder
 from .reader import Reader
 from .generator import Generator 
@@ -71,7 +71,7 @@ def get_rag_generator_components(args, inference_only: bool = False, **kwargs):
 
     # generator
     dropout = args.dropout if hasattr(args, 'dropout') else 0.0
-    cfg = RagConfig.from_pretrained(args.pretrained_model_cfg
+    cfg = RagConfig.from_pretrained(args.pretrained_model_cfg)
     if dropout != 0:
         cfg.attention_probs_dropout_prob = dropout
         cfg.hidden_dropout_prob = dropout
@@ -101,7 +101,7 @@ def get_roberta_tensorizer(args, tokenizer=None):
 def get_rag_tensorizer(args, tokenizer=None):
     if not tokenizer:
         tokenizer = get_rag_tokenizer(args.pretrained_model_cfg, do_lower_case=args.do_lower_case)
-    return RobertaTensorizer(tokenizer, args.sequence_length) # reuse the code
+    return RagTensorizer(tokenizer, args.sequence_length) # reuse the code
 
 ### real hf tokenizer
 def get_bert_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
@@ -203,6 +203,12 @@ class BertTensorizer(Tensorizer):
     def get_pad_id(self) -> int:
         return self.tokenizer.pad_token_type_id
 
+    def get_bos_id(self) -> int:
+        return self.tokenizer.bos_token_type_id
+
+    def get_eos_id(self) -> int:
+        return self.tokenizer.eos_token_type_id
+
     def get_attn_mask(self, tokens_tensor: T) -> T:
         return tokens_tensor != self.get_pad_id()
 
@@ -222,3 +228,83 @@ class BertTensorizer(Tensorizer):
 class RobertaTensorizer(BertTensorizer):
     def __init__(self, tokenizer, max_length: int, pad_to_max: bool = True):
         super(RobertaTensorizer, self).__init__(tokenizer, max_length, pad_to_max=pad_to_max)
+
+
+class RagTensorizer(Tensorizer):
+    def __init__(self, tokenizer: RagTokenizer, max_length: int, pad_to_max: bool = True):
+        self.tokenizer = tokenizer
+        self.e_tokenizer = self.tokenizer.question_encoder
+        self.g_tokenizer = self.tokenizer.generator
+        self.max_length = max_length
+        self.pad_to_max = pad_to_max
+
+    def text_to_tensor_g(self, text: str, add_special_otkens: bool = True):
+        text = text.strip()
+        text = text.replace(" ", "")
+
+        token_ids = self.g_tokenizer.encode(text, add_special_tokens=add_special_tokens, max_length=self.max_length, pad_to_max_length=pad_to_max, truncation=True)
+        return token_ids
+
+    def text_to_tensor(self, text: str, title: str = None, add_special_tokens: bool = True):
+        text = text.strip()
+
+        # NOTICE: for chinese
+        # text = text.replace("[SEP]", "")
+        text = text.replace("[SEP]", " [SEP] ")
+        text = text.replace(" ", "")
+        text = text.replace("[START]", " ")
+        text = text.replace("[END]", " ")
+
+        # tokenizer automatic padding is explicitly disabled since its inconsistent behavior
+        if title:
+            token_ids = self.e_tokenizer.encode(title, text_pair=text, add_special_tokens=add_special_tokens,
+                                              max_length=self.max_length,
+                                              pad_to_max_length=False, truncation=True)
+        else:
+            token_ids = self.e_tokenizer.encode(text, add_special_tokens=add_special_tokens, max_length=self.max_length,
+                                              pad_to_max_length=False, truncation=True)
+
+        seq_len = self.max_length
+        if self.pad_to_max and len(token_ids) < seq_len:
+            token_ids = token_ids + [self.e_tokenizer.pad_token_id] * (seq_len - len(token_ids))
+        if len(token_ids) > seq_len:
+            token_ids = token_ids[0:seq_len]
+            token_ids[-1] = self.e_tokenizer.sep_token_id
+
+        return torch.tensor(token_ids)
+
+    def get_pair_separator_ids(self) -> T:
+        return torch.tensor([self.e_tokenizer.sep_token_id])
+
+    def get_pad_id(self) -> int:
+        return self.e_tokenizer.pad_token_id
+
+    def get_pad_id_g(self) -> int:
+        return self.g_tokenizer.pad_token_id
+
+    def get_bos_id_g(self) -> int:
+        return self.g_tokenizer.bos_token_id
+
+    def get_eos_id_g(self) -> int:
+        return self.g_tokenizer.eos_token_id
+
+    def get_attn_mask(self, tokens_tensor: T) -> T:
+        return tokens_tensor != self.get_pad_id()
+
+    def is_sub_word_id(self, token_id: int):
+        token = self.e_tokenizer.convert_ids_to_tokens([token_id])[0]
+        return token.startswith("##") or token.startswith(" ##")
+
+    def to_string(self, token_ids, skip_special_tokens=True):
+        string = self.g_tokenizer.decode(token_ids, skip_special_tokens=True)
+        # NOTICE: for chinese
+        return string.replace(" ", "")
+
+    def set_pad_to_max(self, do_pad: bool):
+        self.pad_to_max = do_pad
+
+
+class RobertaTensorizer(BertTensorizer):
+    def __init__(self, tokenizer, max_length: int, pad_to_max: bool = True):
+        super(RobertaTensorizer, self).__init__(tokenizer, max_length, pad_to_max=pad_to_max)
+

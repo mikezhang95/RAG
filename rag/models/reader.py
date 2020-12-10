@@ -19,8 +19,8 @@ import torch.nn as nn
 from torch import Tensor as T
 from torch.nn import CrossEntropyLoss
 
-from dpr.data.reader_data import ReaderSample, ReaderPassage
-from dpr.utils.model_utils import init_weights
+from rag.data.reader_data import ReaderSample, ReaderPassage
+from rag.utils.model_utils import init_weights
 
 logger = logging.getLogger()
 
@@ -38,7 +38,9 @@ class Reader(nn.Module):
 
     def forward(self, input_ids: T, attention_mask: T, start_positions=None, end_positions=None, answer_mask=None):
         # notations: N - number of questions in a batch, M - number of passages per questions, L - sequence length
-                                                                   attention_mask.view(N * M, L))
+        N, M, L = input_ids.size()
+        start_logits, end_logits, relevance_logits = self._forward(input_ids.view(N * M, L),
+                                 attention_mask.view(N * M, L))
         if self.training:
             return compute_loss(start_positions, end_positions, answer_mask, start_logits, end_logits, relevance_logits,
                                 N, M)

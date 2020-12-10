@@ -34,7 +34,7 @@ from rag.models.generator import create_generator_input, GeneratorBatch
 # models
 from rag.models import init_generator_components
 from rag.options import add_encoder_params, setup_args_gpu, set_seed, add_training_params, \
-    add_generator_preprocessing_params, set_encoder_params_from_state, get_encoder_params_state, add_tokenizer_params, \
+    add_reader_preprocessing_params, set_encoder_params_from_state, get_encoder_params_state, add_tokenizer_params, \
     print_args
 
 # other utils
@@ -430,7 +430,7 @@ class GeneratorTrainer(object):
                     'question_id': r.id,
                     'question_type': 'DESCRIPTION',
                     'gold_answers': r.gold_answers,
-                    'answers': [best_answer]
+                    'answers': [best_answer],
                     'entity_answers': [[]],
                     'yesno_answers': []
                 }
@@ -443,17 +443,19 @@ def main():
     add_encoder_params(parser)
     add_training_params(parser)
     add_tokenizer_params(parser)
-    add_generator_preprocessing_params(parser)
+    add_reader_preprocessing_params(parser)
 
     # generator specific params
     parser.add_argument('--passages_per_question', type=int, default=5,
                         help="Total amount of positive and negative passages per question")
     parser.add_argument('--passages_per_question_predict', type=int, default=5,
                         help="Total amount of positive and negative passages per question for evaluation")
-    parser.add_argument("--max_answer_length", default=10, type=int,
-                        help="The maximum length of an answer that can be generated. This is needed because the start "
-                             "and end predictions are not conditioned on one another.")
+    parser.add_argument("--max_answer_length", default=100, type=int,
+                        help="The maximum length of an answer that can be generated. This is needed because the start and end predictions are not conditioned on one another.")
+    parser.add_argument("--min_answer_length", default=10, type=int,
+                        help="The maximum length of an answer that can be generated. This is needed because the start and end predictions are not conditioned on one another.")
     parser.add_argument('--prediction_results_file', type=str, help='path to a file to write prediction results to')
+    parser.add_argument('--checkpoint_file_name', type=str, default='rag_generator')
 
     # training paras
     parser.add_argument("--eval_step", default=2000, type=int,

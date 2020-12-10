@@ -22,7 +22,7 @@ import torch
 from torch import Tensor as T
 from tqdm import tqdm
 
-from dpr.utils.data_utils import Tensorizer
+from rag.utils.data_utils import Tensorizer
 import heapq
 
 logger = logging.getLogger()
@@ -45,6 +45,7 @@ class ReaderPassage(object):
         # offset of the actual passage (i.e. not a question or may be title) in the sequence_ids
         self.passage_offset = None
         self.answers_spans = None
+        self.answers_decoder_ids = None
         # passage token ids
         self.sequence_ids = None
 
@@ -275,6 +276,7 @@ def _select_reader_passages(sample: Dict,
 
     ctxs = [ReaderPassage(**ctx) for ctx in sample['ctxs']][0:max_retriever_passages]
     answers_token_ids = [tensorizer.text_to_tensor(a, add_special_tokens=False) for a in answers]
+    answers_token_ids_g = [tensorizer.text_to_tensor_g(a, add_special_tokens=False) for a in answers]
 
     if is_train_set:
         positive_samples = list(filter(lambda ctx: ctx.has_answer, ctxs))
@@ -296,9 +298,16 @@ def _select_reader_passages(sample: Dict,
                             range(len(answers))]
 
             # flatten spans list
-            answer_spans = [item for sublist in answer_spans for item in sublist]
-            answers_spans = list(filter(None, answer_spans))
+            answer_spans_all = [item for sublist in answer_spans for item in sublist]
+
+            # answers_spans = list(filter(None, answer_spans))
+            answers_spans = []
+            for i, answers_span in enumerate(answers_spans_all):
+                if answers_span is None: continue
+                answers_spans.append(answers_span)
+                answers_decoder_ids.append(answers_token_ids_g[i])
             ctx.answers_spans = answers_spans
+            ctx.answers_decoder_ids = answers_decoder_ids 
 
             if not answers_spans:
                 logger.warning('No answer found in passage id=%s text=%s, answers=%s, question=%s', ctx.id,
