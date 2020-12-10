@@ -19,7 +19,7 @@ from transformers.modeling_bert import BertConfig, BertModel
 from transformers.optimization import AdamW
 from transformers.tokenization_bert import BertTokenizer
 from transformers.tokenization_roberta import RobertaTokenizer
-from transformers import RagTokenizer, RagTokenForGeneration
+from transformers import RagConfig, RagTokenizer, RagTokenForGeneration
 
 from dpr.utils.data_utils import Tensorizer
 from .biencoder import BiEncoder
@@ -66,19 +66,25 @@ def get_bert_reader_components(args, inference_only: bool = False, **kwargs):
     return tensorizer, reader, optimizer
 
 def get_rag_generator_components(args, inference_only: bool = False, **kwargs):
-    # dropout = args.dropout if hasattr(args, 'dropout') else 0.0
-    # encoder = HFRagGenerator.init_encoder(args.pretrained_model_cfg,
-    #                                      projection_dim=args.projection_dim, dropout=dropout)
-    # hidden_size = encoder.config.hidden_size
-    # reader = Reader(encoder, hidden_size)
-    generator = Generator(args)
+    # tokenizer
+    tensorizer = get_rag_tensorizer(args)
 
+    # generator
+    dropout = args.dropout if hasattr(args, 'dropout') else 0.0
+    cfg = RagConfig.from_pretrained(args.pretrained_model_cfg
+    if dropout != 0:
+        cfg.attention_probs_dropout_prob = dropout
+        cfg.hidden_dropout_prob = dropout
+
+    rag = RagTokenForGeneration.from_pretrained(args.pretrained_model_cfg, config=cfg, use_dummy_dataset=True)
+    generator = Generator(rag, tensorizer)
+
+    # optimizer
     optimizer = get_optimizer(generator,
                               learning_rate=args.learning_rate,
                               adam_eps=args.adam_eps, weight_decay=args.weight_decay,
                               ) if not inference_only else None
 
-    tensorizer = get_rag_tensorizer(args)
     return tensorizer, generator, optimizer
 
 ### wrapped tensorizer
@@ -97,6 +103,16 @@ def get_rag_tensorizer(args, tokenizer=None):
         tokenizer = get_rag_tokenizer(args.pretrained_model_cfg, do_lower_case=args.do_lower_case)
     return RobertaTensorizer(tokenizer, args.sequence_length) # reuse the code
 
+### real hf tokenizer
+def get_bert_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
+    return BertTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+
+def get_roberta_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
+    return RobertaTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+
+def get_rag_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
+    return RagTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+
 ### optimizer
 def get_optimizer(model: nn.Module, learning_rate: float = 1e-5, adam_eps: float = 1e-8,
                   weight_decay: float = 0.0, ) -> torch.optim.Optimizer:
@@ -109,16 +125,6 @@ def get_optimizer(model: nn.Module, learning_rate: float = 1e-5, adam_eps: float
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=adam_eps)
     return optimizer
-
-### real hf tokenizer
-def get_bert_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
-    return BertTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
-
-def get_roberta_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
-    return RobertaTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
-
-def get_rag_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
-    return RagTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
 
 
 class HFBertEncoder(BertModel):

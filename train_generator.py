@@ -49,7 +49,7 @@ if (logger.hasHandlers()):
 console = logging.StreamHandler(stream=sys.stdout)
 logger.addHandler(console)
 
-GeneratorQuestionPredictions = collections.namedtuple('GeneratorQuestionPredictions', ['question', 'id', 'predictions', 'gold_answers', 'passages_has_answer'])
+GeneratorQuestionPredictions = collections.namedtuple('GeneratorQuestionPredictions', ['question', 'id', 'predict_text', 'gold_answers', 'passages_has_answer'])
 
 
 class GeneratorTrainer(object):
@@ -165,22 +165,37 @@ class GeneratorTrainer(object):
 
         for i, samples_batch in enumerate(data_iterator.iterate_data()):
 
-            # Notice: create_generator_input
-            # TODO:
+            # 1. create generato input
             input = create_generator_input(self.tensorizer.get_pad_id(),
                                         samples_batch,
                                         args.passages_per_question_predict,
                                         args.sequence_length,
-                                        args.max_n_answers,
                                         is_train=False, shuffle=False)
 
             input = GeneratorBatch(**move_to_device(input._asdict(), args.device))
+            context_attn_mask = self.tensorizer.get_attn_mask(input.context_input_ids)
 
-            # TODO: generate output seqs 
+            # 2. model forward
             with torch.no_grad():
-                start_logits, end_logits, relevance_logits = self.generator(input.input_ids, attn_mask)
-            # TODO: convert results
-            batch_predictions = 
+                decoder_ids = self.generator.generate(input.context_input_ids, 
+                                        context_attn_mask,
+                                        input.doc_scores,
+                                        num_beams=args.num_beams,
+                                        max_length=args.max_answer_length,
+                                        min_length=args.min_answer_length)
+
+
+            # 3. organize results
+            predict_answers = self.tensorizer.to_string(decoder_ids)
+            batch_predictions = []
+            for i in range(len(predict_answers)):
+                sample = samples_batch[i]
+                predict_text = predict_answers[i]
+                has_answer = True in [p.has_answer for p in sample.passages]
+
+                prediction = GeneratorQuestionPredictions(sample.question, sample.question_id,  predict_text, sample.answers, has_answer)
+                batch_predictions.append(prediction)
+
             all_results.extend(batch_predictions)
 
             if (i + 1) % log_result_step == 0:
@@ -202,19 +217,21 @@ class GeneratorTrainer(object):
 
             for q_predictions in all_results:
                 gold_answers = q_predictions.gold_answers
-                gen_predictions = q_predictions.predictions  # {top docs threshold -> SpanPrediction()}
+                predict_text = q_predictions.predict_text  # {top docs threshold -> SpanPrediction()}
                 # Notice: bad for evaluation
                 if len(gold_answers) == 0: continue
 
-                for (n, gen_prediction) in gen_predictions.items():
-                    em_hit = max([exact_match_score(gen_prediction.prediction_text, ga) for ga in gold_answers])
-                    ems[n].append(em_hit)
-                    # for bleu/rouge later
-                    gts[n].append(gold_answers)
-                    preds[n].append(gen_prediction.prediction_text)
-                    # for qa_classify topk
-                    has_answer = True in q_predictions.passages_has_answer
-                    topk[n].append(float(has_answer))
+                # we only calculate top-k generate score
+                n = args.passages_per_question_predict
+
+                em_hit = max([exact_match_score(predict_text, ga) for ga in gold_answers])
+                ems[n].append(em_hit)
+                # for bleu/rouge later
+                gts[n].append(gold_answers)
+                preds[n].append(predict_text)
+                # for qa_classify topk
+                has_answer = True in q_predictions.passages_has_answer
+                topk[n].append(float(has_answer))
 
             for n in sorted(ems.keys()):
                 em = np.mean(ems[n])
@@ -248,16 +265,21 @@ class GeneratorTrainer(object):
                 if args.n_gpu > 0:
                     torch.cuda.manual_seed_all(args.seed + global_step)
 
-            # TODO: 
+            # 1. create generato input
             input = create_generator_input(self.tensorizer.get_pad_id(),
                                         samples_batch,
-                                        args.passages_per_question,
+                                        args.passages_per_question_predict,
                                         args.sequence_length,
-                                        args.max_n_answers,
                                         is_train=True, shuffle=True)
 
-            # TODO:
-            loss = self._calc_loss(input)
+            input = GeneratorBatch(**move_to_device(input._asdict(), args.device))
+            context_attn_mask = self.tensorizer.get_attn_mask(input.context_input_ids)
+
+            # 2. compute loss
+            lsos = self.generator(input.context_input_ids, 
+                                  context_attn_mask,
+                                  input.doc_scores,
+                                  input.decoder_input_ids)
 
             epoch_loss += loss.item()
             rolling_train_loss += loss.item()

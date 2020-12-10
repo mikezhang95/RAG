@@ -28,21 +28,39 @@ GeneratorBatch = collections.namedtuple('GeneratorBatch', ['context_input_ids', 
 
 class Generator(nn.Module):
 
-    def __init__(self, encoder: nn.Module, hidden_size):
-        super(generator, self).__init__()
-
-        self.generator = ....
+    def __init__(self, generator: nn.Module, tokenizer):
+        super(Generator, self).__init__()
+        self.generator = generator
+        self.pad_token_id = tokenizer.pad_token_id
+        self.bos_token_id = tokenizer.bos_token_id
+        self.eos_token_id = tokenizer.eos_token_id
 
     def forward(self, context_input_ids, context_attention_mask, doc_scores, decoder_input_ids=None):
 
-        # notations: N - number of questions in a batch, M - number of passages per questions, L - sequence length
-        N, M, L = input_ids.size()
-        self.generator
-
+        outputs = self.generator(context_input_ids=context_input_ids,
+                                 context_attention_mask=context_attention_mask,
+                                 doc_scores=doc_scores)
         if self.training:
+            loss = self.generator.get_nll(outputs.logits,
+                                          outputs.doc_scores,
+                                          decoder_input_ids,
+                                          reduce_loss=None)
+            return loss
+
+        return outputs
+             
     
-    def generate(self, context_input_ids, context_attention_mask, doc_scores):
-        self.generator
+    def generate(self, context_input_ids, context_attention_mask, doc_scores, num_beams=1, max_length=200, min_length=10):
+        decoder_input_ids = self.generator.generate(context_input_ids=context_input_ids,
+                                context_attention_mask=context_attention_mask,
+                                doc_scores=doc_scores,
+                                max_length=max_length,
+                                min_length=min_length,
+                                pad_token_id=self.pad_token_id,
+                                bos_token_id=self.bos_token_id,
+                                eos_token_id=self.eos_token_id,
+                                num_beams=num_beams)
+        return decoder_input_ids
 
 
 def create_generator_input(pad_token_id: int,
@@ -58,10 +76,9 @@ def create_generator_input(pad_token_id: int,
     :param samples: list of samples to create the batch for
     :param passages_per_question: amount of passages for every question in a batch
     :param max_length: max model input sequence length
-    :param max_n_answers: max num of answers per single question
     :param is_train: if the samples are for a train set
     :param shuffle: should passages selection be randomized
-    :return: ReaderBatch instance
+    :return: GeneratorBatch instance
     """
 
     context_input_ids = []
@@ -93,13 +110,10 @@ def create_generator_input(pad_token_id: int,
         if is_train:
             decoder_input_ids.append(answer_input_ids)
 
-    input_ids = torch.cat([ids.unsqueeze(0) for ids in input_ids], dim=0)
-
-    context_input_ids = torch.cat(context_input_ids, dim=0)
-    context_attention_mask = torch.cat(context_attention_mask, dim=0)
-    doc_scores = torch.stack(doc_scores, dim=0)
+    context_input_ids = torch.cat(context_input_ids, dim=0) # [bs*n_doc, max_len]
+    doc_scores = torch.stack(doc_scores, dim=0) # [bs, n_doc]
     if is_train:
-        decoder_input_ids = torch.stack(decoder_input_ids, dim=0)
+        decoder_input_ids = torch.stack(decoder_input_ids, dim=0) # [bs, max_len]
 
     return GeneratorBatch(context_input_ids, doc_scores, decoder_input_ids)
 
@@ -156,15 +170,17 @@ def _create_question_passages_tensors(ctxs: List[ReaderPassage],
         passages_selected.append(empty_ids.clone())
         passages_scores.append(0.0)
 
-    input_ids = torch.cat(passages_selected, dim=0)
+    input_ids = torch.cat(passages_selected, dim=0) # [n_doc, max_len]
     input_ids = input_ids.long()
 
-    doc_scores = torch.cat(doc_scores, dim=0)
+    doc_scores = torch.cat(doc_scores, dim=0) # [n_doc]
     doc_scores = doc_scores.float()
 
     if is_train:
         answer_input_ids = [_pad_to_len(ids), pad_token_id, max_len) for ids in answer_input_ids]
-        answer_input_ids = answer_input_ids.long()
+        answer_input_ids = answer_input_ids.squeeze(0) # [max_len]
+        answer_input_ids = answer_input_ids.long() 
+
 
     return input_ids, doc_scores, answer_input_ids
 

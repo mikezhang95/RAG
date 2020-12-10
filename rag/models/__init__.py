@@ -53,11 +53,11 @@ def init_hf_roberta_tenzorizer(args, **kwargs):
     from .hf_models import get_roberta_tensorizer
     return get_roberta_tensorizer(args)
 
-def init_rag_reader(args, **kwargs):
+def init_rag_generator(args, **kwargs):
     if importlib.util.find_spec("transformers") is None:
         raise RuntimeError('Please install transformers lib')
-    from .hf_models import get_rag_reader_components
-    return get_rag_reader_components(args, **kwargs)
+    from .hf_models import get_rag_generator_components
+    return get_rag_generator_components(args, **kwargs)
 
 def init_rag_tenzorizer(args, **kwargs):
     if importlib.util.find_spec("transformers") is None:
@@ -74,7 +74,6 @@ BIENCODER_INITIALIZERS = {
 
 READER_INITIALIZERS = {
     'hf_bert': init_hf_bert_reader,
-    'rag': init_rag_generator,
 }
 
 TENSORIZER_INITIALIZERS = {
@@ -85,6 +84,9 @@ TENSORIZER_INITIALIZERS = {
     'rag': init_rag_tenzorizer,
 }
 
+GENERATOR_INITIALIZERS = {
+    'rag': init_rag_generator,
+}
 
 def init_comp(initializers_dict, type, args, **kwargs):
     if type in initializers_dict:
@@ -102,4 +104,9 @@ def init_reader_components(encoder_type: str, args, **kwargs):
 
 
 def init_tenzorizer(encoder_type: str, args, **kwargs):
-    ragreturn init_comp(TENSORIZER_INITIALIZERS, encoder_type, args, **kwargs)
+    return init_comp(TENSORIZER_INITIALIZERS, encoder_type, args, **kwargs)
+
+def init_generator_components(encoder_type: str, args, **kwargs):
+    return init_comp(GENERATOR_INITIALIZERS, encoder_type, args, **kwargs)
+
+
