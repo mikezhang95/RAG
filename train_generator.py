@@ -236,7 +236,7 @@ class GeneratorTrainer(object):
                 gts[n].append(gold_answers)
                 preds[n].append(predict_text)
                 # for qa_classify topk
-                has_answer = True in q_predictions.passages_has_answer
+                has_answer = q_predictions.passages_has_answer
                 topk[n].append(float(has_answer))
 
             for n in sorted(ems.keys()):
