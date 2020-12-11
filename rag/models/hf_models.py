@@ -73,7 +73,7 @@ def get_rag_generator_components(args, inference_only: bool = False, **kwargs):
 
     # generator
     dropout = args.dropout if hasattr(args, 'dropout') else 0.0
-    rag_config = RagConfig.from_pretrained(args.pretrained_model_cfg)
+    rag_config = RagConfig.from_pretrained("facebook/rag-token-nq")
     if dropout != 0:
         rag_config.attention_probs_dropout_prob = dropout
         rag_config.hidden_dropout_prob = dropout
