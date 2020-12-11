@@ -23,4 +23,4 @@ python -m torch.distributed.launch \
     --dev_batch_size 8 \
     --output_dir data/dr_exp/generator \
     --gradient_accumulation_steps 1 \
-    # > data/dr_exp/generator/train.log 
+    > data/dr_exp/generator/train.log 
