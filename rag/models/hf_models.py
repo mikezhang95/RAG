@@ -20,6 +20,7 @@ from transformers.optimization import AdamW
 from transformers import BertTokenizer
 from transformers import RobertaTokenizer
 from transformers import RagConfig, RagTokenizer, RagTokenForGeneration
+from transformers import AutoTokenizer, AutoConfig, AutoModelForSeq2SeqLM
 
 from rag.utils.data_utils import Tensorizer
 from .biencoder import BiEncoder
@@ -66,17 +67,33 @@ def get_bert_reader_components(args, inference_only: bool = False, **kwargs):
     return tensorizer, reader, optimizer
 
 def get_rag_generator_components(args, inference_only: bool = False, **kwargs):
+
     # tokenizer
     tensorizer = get_rag_tensorizer(args)
 
     # generator
     dropout = args.dropout if hasattr(args, 'dropout') else 0.0
-    cfg = RagConfig.from_pretrained(args.pretrained_model_cfg)
+    rag_config = RagConfig.from_pretrained(args.pretrained_model_cfg)
     if dropout != 0:
-        cfg.attention_probs_dropout_prob = dropout
-        cfg.hidden_dropout_prob = dropout
+        rag_config.attention_probs_dropout_prob = dropout
+        rag_config.hidden_dropout_prob = dropout
 
-    rag = RagTokenForGeneration.from_pretrained(args.pretrained_model_cfg, config=cfg, use_dummy_dataset=True)
+    # facebook/rag-token-nq
+    # rag = RagTokenForGeneration.from_pretrained(args.pretrained_model_cfg, config=rag_config, use_dummy_dataset=True)
+
+    # customize rag generator/question_encoder  
+    # Notice: question_encoder not required.
+    generator_name_or_path = args.pretrained_model_cfg
+    question_encoder_name_or_path = generator_name_or_path
+    gen_config =  AutoConfig.from_pretrained(generator_name_or_path)
+    question_encoder_config = AutoConfig.from_pretrained(question_encoder_name_or_path)
+    rag_config.generator = gen_config
+    rag_config.question_encoder = question_encoder_config
+
+    rag = RagTokenForGeneration.from_pretrained_question_encoder_generator(
+        question_encoder_name_or_path, generator_name_or_path, config=rag_config, dummy_dataset=True
+    )
+
     generator = Generator(rag, tensorizer)
 
     # optimizer
@@ -111,7 +128,12 @@ def get_roberta_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
     return RobertaTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
 
 def get_rag_tokenizer(pretrained_cfg_name: str, do_lower_case: bool = True):
-    return RagTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+    # return RagTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+    tokenizer = RagTokenizer.from_pretrained("facebook/rag-token-nq")
+    tokenizer.generator = AutoTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+    tokenizer.question_encoder = AutoTokenizer.from_pretrained(pretrained_cfg_name, do_lower_case=do_lower_case)
+    return tokenizer
+
 
 ### optimizer
 def get_optimizer(model: nn.Module, learning_rate: float = 1e-5, adam_eps: float = 1e-8,

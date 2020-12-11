@@ -172,6 +172,7 @@ class GeneratorTrainer(object):
                                         samples_batch,
                                         args.passages_per_question_predict,
                                         args.sequence_length,
+                                        args.max_answer_length,
                                         is_train=False, shuffle=False)
 
             input = GeneratorBatch(**move_to_device(input._asdict(), args.device))
@@ -179,7 +180,7 @@ class GeneratorTrainer(object):
 
             # 2. model forward
             with torch.no_grad():
-                decoder_ids = self.generator.generate(input.context_input_ids, 
+                decoder_ids = self.generator.module.generate(input.context_input_ids, 
                                         context_attn_mask,
                                         input.doc_scores,
                                         num_beams=args.num_beams,
@@ -188,7 +189,10 @@ class GeneratorTrainer(object):
 
 
             # 3. organize results
-            predict_answers = self.tensorizer.to_string(decoder_ids)
+            predict_answers = []
+            for d in decoder_ids:
+                predict_answers.append(self.tensorizer.to_string(d))
+
             batch_predictions = []
             for i in range(len(predict_answers)):
                 sample = samples_batch[i]
@@ -273,6 +277,7 @@ class GeneratorTrainer(object):
                                         samples_batch,
                                         args.passages_per_question_predict,
                                         args.sequence_length,
+                                        args.max_answer_length,
                                         is_train=True, shuffle=True)
 
             input = GeneratorBatch(**move_to_device(input._asdict(), args.device))
@@ -283,7 +288,7 @@ class GeneratorTrainer(object):
                                   context_attn_mask,
                                   input.doc_scores,
                                   input.decoder_input_ids)
-            if args.n_gpu > 1:
+            if args.n_gpu > 0:
                 loss = loss.mean()
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -449,6 +454,8 @@ def main():
                         help="The maximum length of an answer that can be generated. This is needed because the start and end predictions are not conditioned on one another.")
     parser.add_argument('--prediction_results_file', type=str, help='path to a file to write prediction results to')
     parser.add_argument('--checkpoint_file_name', type=str, default='rag_generator')
+    parser.add_argument("--num_beams", default=1, type=int,
+                        help="beam search depth")
 
     # training paras
     parser.add_argument("--eval_step", default=2000, type=int,

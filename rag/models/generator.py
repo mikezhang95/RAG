@@ -42,19 +42,23 @@ class Generator(nn.Module):
         outputs = self.generator(context_input_ids=context_input_ids,
                                  context_attention_mask=context_attention_mask,
                                  doc_scores=doc_scores,
-                                 n_docs=doc_scores.size()[1])
+                                 n_docs=doc_scores.size()[1],
+                                 labels=decoder_input_ids)
         if self.training:
-            gen_loss = self.generator.get_nll(outputs.logits,
-                                          outputs.doc_scores,
-                                          decoder_input_ids,
-                                          reduce_loss=True,
-                                          n_docs=doc_scores.size()[1])
-            return gen_loss
+            return outputs.loss
+       #      gen_loss = self.generator.get_nll(outputs.logits,
+       #                                    outputs.doc_scores,
+       #                                    decoder_input_ids,
+       #                                    reduce_loss=True,
+       #                                    n_docs=doc_scores.size()[1])
+       #      return gen_loss
 
         return outputs
              
     
     def generate(self, context_input_ids, context_attention_mask, doc_scores, num_beams=1, max_length=200, min_length=10):
+        context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
+        context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size()[-1])
         decoder_input_ids = self.generator.generate(context_input_ids=context_input_ids,
                                 context_attention_mask=context_attention_mask,
                                 doc_scores=doc_scores,
@@ -63,6 +67,8 @@ class Generator(nn.Module):
                                 pad_token_id=self.pad_token_id,
                                 bos_token_id=self.bos_token_id,
                                 eos_token_id=self.eos_token_id,
+                                decoder_start_token_id=self.eos_token_id,
+                                n_docs=doc_scores.size()[1],
                                 num_beams=num_beams)
         return decoder_input_ids
 
@@ -71,6 +77,7 @@ def create_generator_input(pad_token_id: int, pad_token_id_g: int,
                         samples: List[ReaderSample],
                         passages_per_question: int,
                         max_length: int,
+                        max_answer_length: int,
                         is_train: bool,
                         shuffle: bool,
                         ) -> GeneratorBatch:
@@ -90,7 +97,7 @@ def create_generator_input(pad_token_id: int, pad_token_id_g: int,
     doc_scores = []
     decoder_input_ids = []
 
-    empty_sequence = torch.Tensor().new_full((max_length,), pad_token_id, dtype=torch.long)
+    # empty_sequence = torch.Tensor().new_full((max_length,), pad_token_id, dtype=torch.long)
 
     for sample in samples:
         ctxs = sample.passages
@@ -99,7 +106,7 @@ def create_generator_input(pad_token_id: int, pad_token_id_g: int,
         sample_tensors = _create_question_passages_tensors(ctxs, 
                                                            sample.answers_ids,
                                                            passages_per_question,
-                                                           empty_sequence,
+                                                           max_length, max_answer_length,
                                                            pad_token_id,
                                                            pad_token_id_g,
                                                            is_train,
@@ -134,17 +141,18 @@ def _pad_to_len(seq: T, pad_id: int, max_len: int):
 def _create_question_passages_tensors(ctxs: List[ReaderPassage],
                                       answers_input_ids: list,
                                       total_size: int,
-                                      empty_ids: T,
+                                      max_len: int,
+                                      max_answer_len: int,
                                       pad_token_id: int,
                                       pad_token_id_g: int,
                                       is_train: bool,
                                       is_random: bool = True):
-    max_len = empty_ids.size(0)
+    # max_len = empty_ids.size(0)
 
     if is_train:
         if len(answers_input_ids) == 0: return None
         answer_input_ids = answers_input_ids[np.random.choice(len(answers_input_ids))]
-        answer_input_ids = _pad_to_len(torch.tensor(answer_input_ids), pad_token_id_g, max_len)
+        answer_input_ids = _pad_to_len(torch.tensor(answer_input_ids), pad_token_id_g, max_answer_len)
         answer_input_ids = answer_input_ids.long() 
     else:
         answer_input_ids = None
