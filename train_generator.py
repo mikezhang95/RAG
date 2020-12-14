@@ -243,7 +243,7 @@ class GeneratorTrainer(object):
                 em = np.mean(ems[n])
                 bleu = bleu_scorer.compute_score(gts[n], preds[n])
                 rouge = rouge_scorer.compute_score(gts[n], preds[n])
-                tk = np1mean(topk[n])
+                tk = np.mean(topk[n])
                 logger.info("n=%d\tEM %.2f\tRouge-L %.2f\tBLEU-4 %.2f\tTop-k %.2f\n" % (n, em * 100, rouge * 100, bleu * 100, tk * 100))
 
         return em
