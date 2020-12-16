@@ -180,7 +180,11 @@ class GeneratorTrainer(object):
 
             # 2. model forward
             with torch.no_grad():
-                decoder_ids = self.generator.module.generate(input.context_input_ids, 
+                if hasattr(self.generator, 'module'):
+                    gen = self.generator.module
+                else:
+                    gen = self.generator
+                decoder_ids = gen.generate(input.context_input_ids, 
                                         context_attn_mask,
                                         input.doc_scores,
                                         num_beams=args.num_beams,
@@ -197,7 +201,7 @@ class GeneratorTrainer(object):
             for i in range(len(predict_answers)):
                 sample = samples_batch[i]
                 predict_text = predict_answers[i]
-                has_answer = True in [p.has_answer for p in sample.passages]
+                has_answer = True in [p.has_answer for i, p in enumerate(sample.passages) if i < args.passages_per_question_predict ]
 
                 prediction = GeneratorQuestionPredictions(sample.question, sample.question_id,  predict_text, sample.answers, has_answer)
                 batch_predictions.append(prediction)
