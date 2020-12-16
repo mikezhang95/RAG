@@ -198,10 +198,10 @@ class GeneratorTrainer(object):
                 predict_answers.append(self.tensorizer.to_string(d))
 
             batch_predictions = []
-            for i in range(len(predict_answers)):
-                sample = samples_batch[i]
-                predict_text = predict_answers[i]
-                has_answer = True in [p.has_answer for i, p in enumerate(sample.passages) if i < args.passages_per_question_predict ]
+            for j in range(len(predict_answers)):
+                sample = samples_batch[j]
+                predict_text = predict_answers[j]
+                has_answer = True in [p.has_answer for s, p in enumerate(sample.passages) if s < args.passages_per_question_predict ]
 
                 prediction = GeneratorQuestionPredictions(sample.question, sample.question_id,  predict_text, sample.answers, has_answer)
                 batch_predictions.append(prediction)
@@ -426,7 +426,7 @@ class GeneratorTrainer(object):
         logger.info('Saving prediction results to  %s', out_file)
         with open(out_file, 'w', encoding="utf-8") as output:
             for r in prediction_results:
-                best_answer = list(r.predictions.values())[0].prediction_text
+                best_answer = r.predict_text
                 s = {
                     'question': r.question,
                     'question_id': r.id,
