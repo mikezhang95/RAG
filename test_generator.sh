@@ -11,4 +11,5 @@ python train_generator.py \
     --sequence_length 300 \
     --max_answer_length 200 \
     --min_answer_length 10 \
+    --seed 42 \
     # --test_only 

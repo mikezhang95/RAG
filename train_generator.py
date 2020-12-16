@@ -218,7 +218,9 @@ class GeneratorTrainer(object):
         rouge_scorer = Rouge()
         bleu_scorer = Bleu()
 
-        if len(all_results[0].gold_answers) != 0: 
+        all_answers = [ len(a.gold_answers) for a in all_results ]
+
+        if np.sum(all_answers) > 0 :
 
             ems = defaultdict(list)
             gts = defaultdict(list)
@@ -436,7 +438,7 @@ class GeneratorTrainer(object):
                     'entity_answers': [[]],
                     'yesno_answers': []
                 }
-                out_file.write(json.dumps(s, ensure_ascii=False) + "\n")
+                output.write(json.dumps(s, ensure_ascii=False) + "\n")
 
 
 def main():
