@@ -148,6 +148,7 @@ def _create_question_passages_tensors(ctxs: List[ReaderPassage],
                                       is_train: bool,
                                       is_random: bool = True):
     # max_len = empty_ids.size(0)
+    empty_sequence = torch.Tensor().new_full((max_len,), pad_token_id, dtype=torch.long)
 
     if is_train:
         if len(answers_input_ids) == 0: return None
@@ -168,7 +169,10 @@ def _create_question_passages_tensors(ctxs: List[ReaderPassage],
     # PAD passages
     while len(passages_selected) < total_size:
         # passages_selected.append(empty_ids.clone())
-        passages_selected.append(passages_selected[-1])
+        if len(passages_selected) == 0:
+            passages_selected.append(empty_ids.clone())
+        else:
+            passages_selected.append(passages_selected[-1])
         passages_scores.append(0.0)
 
     input_ids = torch.stack(passages_selected, dim=0) # [n_doc, max_len]
